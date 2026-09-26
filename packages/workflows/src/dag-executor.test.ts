@@ -20660,6 +20660,7 @@ describe('executeDagWorkflow -- persist_session', () => {
 
     expect(store.getWorkflowNodeSession).not.toHaveBeenCalled();
     expect(mockSendQueryDag.mock.calls[0][2]).toBeUndefined();
+    expect(mockSendQueryDag.mock.calls[0][3]?.persistSession).toBe(false);
     expect(store.upsertWorkflowNodeSession).not.toHaveBeenCalled();
   });
 

@@ -2269,6 +2269,9 @@ async function executeNodeInternal(
   const nodeOptionsWithAbort: SendQueryOptions | undefined = {
     ...nodeOptions,
     abortSignal: nodeAbortController.signal,
+    // Fresh-context workflow nodes are equivalent to CLI `pi --no-session`:
+    // their transcript is not resumable and must not accumulate under ~/.pi.
+    ...(node.context === 'fresh' ? { persistSession: false } : {}),
     ...(shouldForkSession ? { forkSession: true } : {}),
   };
   let nodeIdleTimedOut = false;
