@@ -171,6 +171,13 @@ describe('title-generator', () => {
     expect(optionsArg.model).toBeUndefined();
   });
 
+  test('disables session persistence for fire-and-forget titles', async () => {
+    await generateAndSetTitle('conv-no-session', 'Generate a title', 'pi', '/tmp');
+
+    expect(mockSendQuery).toHaveBeenCalledTimes(1);
+    expect(mockSendQuery.mock.calls[0]?.[3]?.persistSession).toBe(false);
+  });
+
   test('passes nodeConfig with allowed_tools: [] to disable tool access', async () => {
     await generateAndSetTitle('conv-11', 'Some message', 'claude', '/tmp');
 

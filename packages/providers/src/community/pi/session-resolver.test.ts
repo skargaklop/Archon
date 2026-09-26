@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, mock, test } from 'bun:test';
 // ─── Mock SessionManager before import ─────────────────────────────────────
 
 const mockCreate = mock((_cwd: string) => ({ __kind: 'created' }));
+const mockInMemory = mock((_cwd: string) => ({ __kind: 'in-memory' }));
 const mockOpen = mock((_path: string) => ({ __kind: 'opened' }));
 const mockForkFrom = mock(async (_path: string, _cwd: string) => ({ __kind: 'forked' }));
 const mockList = mock(async (_cwd: string) => [] as { id: string; path: string; cwd: string }[]);
@@ -10,6 +11,7 @@ const mockList = mock(async (_cwd: string) => [] as { id: string; path: string; 
 mock.module('@earendil-works/pi-coding-agent', () => ({
   SessionManager: {
     create: mockCreate,
+    inMemory: mockInMemory,
     open: mockOpen,
     forkFrom: mockForkFrom,
     list: mockList,
@@ -21,6 +23,7 @@ import { resolvePiSession } from './session-resolver';
 describe('resolvePiSession', () => {
   beforeEach(() => {
     mockCreate.mockClear();
+    mockInMemory.mockClear();
     mockOpen.mockClear();
     mockForkFrom.mockClear();
     mockList.mockClear();
@@ -32,6 +35,14 @@ describe('resolvePiSession', () => {
     expect(result.resumeFailed).toBe(false);
     expect(mockCreate).toHaveBeenCalledWith('/tmp/proj');
     expect(mockOpen).not.toHaveBeenCalled();
+    expect(mockList).not.toHaveBeenCalled();
+  });
+
+  test('persistSession=false → create in-memory session like pi --no-session', async () => {
+    const result = await resolvePiSession('/tmp/proj', undefined, false, false);
+    expect(result.resumeFailed).toBe(false);
+    expect(mockInMemory).toHaveBeenCalledWith('/tmp/proj');
+    expect(mockCreate).not.toHaveBeenCalled();
     expect(mockList).not.toHaveBeenCalled();
   });
 

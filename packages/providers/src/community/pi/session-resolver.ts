@@ -19,7 +19,8 @@ export interface ResolvedSession {
  * Resolve a Pi `SessionManager` for a sendQuery call.
  *
  * Behavior:
- *  - No resumeSessionId → fresh `SessionManager.create(cwd)`.
+ *  - No resumeSessionId + persistSession=true → fresh `SessionManager.create(cwd)`.
+ *  - No resumeSessionId + persistSession=false → `SessionManager.inMemory(cwd)` (CLI `--no-session` parity).
  *  - resumeSessionId matches a session file for this cwd → `SessionManager.open(path)`.
  *  - resumeSessionId matches and forkSession is true → `SessionManager.forkFrom(path, cwd)`.
  *  - resumeSessionId provided but not found → fresh session, `resumeFailed: true`.
@@ -38,10 +39,14 @@ export interface ResolvedSession {
 export async function resolvePiSession(
   cwd: string,
   resumeSessionId: string | undefined,
-  forkSession = false
+  forkSession = false,
+  persistSession = true
 ): Promise<ResolvedSession> {
   if (!resumeSessionId) {
-    return { sessionManager: SessionManager.create(cwd), resumeFailed: false };
+    return {
+      sessionManager: persistSession ? SessionManager.create(cwd) : SessionManager.inMemory(cwd),
+      resumeFailed: false,
+    };
   }
 
   try {

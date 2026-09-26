@@ -671,7 +671,8 @@ export class PiProvider implements IAgentProvider {
     const { sessionManager, resumeFailed } = await resolvePiSession(
       cwd,
       resumeSessionId,
-      requestOptions?.forkSession
+      requestOptions?.forkSession,
+      requestOptions?.persistSession
     );
     if (resumeFailed) {
       yield {
