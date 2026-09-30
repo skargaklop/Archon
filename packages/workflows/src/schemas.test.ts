@@ -1546,6 +1546,26 @@ describe('dagNodeSchema — loop_group', () => {
     }
   });
 
+  test('loop_group accepts a packet session scope but rejects a blank one', () => {
+    const base = {
+      id: 'packet-loop',
+      loop_group: {
+        max_iterations: 2,
+        until_bash: 'exit 1',
+        nodes: [{ id: 'select-packet', bash: 'echo P-1' }],
+        session_scope_key: '$select-packet.output.packet_id',
+      },
+    };
+    const parsed = dagNodeSchema.safeParse(base);
+    expect(parsed.success).toBe(true);
+    expect(
+      dagNodeSchema.safeParse({
+        ...base,
+        loop_group: { ...base.loop_group, session_scope_key: ' ' },
+      }).success
+    ).toBe(false);
+  });
+
   test('loop_group accepts until_bash alone (no prose signal) — #2563', () => {
     const result = dagNodeSchema.safeParse({
       id: 'grp',

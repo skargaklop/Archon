@@ -2076,7 +2076,8 @@ async function executeNodeInternal(
   stepNamePrefix = '',
   iteration?: number,
   checkpointSession?: SessionCheckpoint,
-  typedArtifactsFile?: string
+  typedArtifactsFile?: string,
+  packetSessionScope?: string
 ): Promise<NodeExecutionResult> {
   const {
     deps,
@@ -2271,7 +2272,9 @@ async function executeNodeInternal(
     abortSignal: nodeAbortController.signal,
     // Fresh-context workflow nodes are equivalent to CLI `pi --no-session`:
     // their transcript is not resumable and must not accumulate under ~/.pi.
-    ...(node.context === 'fresh' ? { persistSession: false } : {}),
+    ...(node.context === 'fresh' && packetSessionScope === undefined
+      ? { persistSession: false }
+      : {}),
     ...(shouldForkSession ? { forkSession: true } : {}),
   };
   let nodeIdleTimedOut = false;
@@ -5064,11 +5067,10 @@ async function executeLoopGroupBody(
       // a loop_group body exec in the same place (host, or the container in Phase B)
       // — without this a loop_group body would be a host-escape hole.
       execContext: ctx.execContext,
-      // persist_session across iterations is out of v1 scope (body sessions reset per
-      // iteration, governed by fresh_context). Pass undefined/false so body nodes don't
-      // participate in cross-run session persistence inside the loop — and therefore
-      // no scope-artifact mirroring either.
+      // Ambient persistence stays disabled. sessionScopeKey is resolved after the
+      // body node that supplies the packet has completed.
       persistScopeKey: undefined,
+      sessionScopeKey: group.session_scope_key,
       workflowPersistSessions: false,
       scopeArtifactsDir: undefined,
       layers: iterBodyLayers,
@@ -9250,6 +9252,7 @@ async function executeComposeFanOutNode(
         configuredCommandFolder: ctx.configuredCommandFolder,
         issueContext: ctx.issueContext,
         persistScopeKey: ctx.persistScopeKey,
+        sessionScopeKey: ctx.sessionScopeKey,
         workflowPersistSessions: ctx.workflowPersistSessions,
         scopeArtifactsDir: undefined,
         // Runtime cardinality changes only the deterministic instance prefix; the body
@@ -9435,6 +9438,26 @@ function nodeUsesPersistedScope(node: DagNode, workflowPersistSessions: boolean)
   return nodePersist ?? workflowPersistSessions;
 }
 
+/** Keep packet/session scope keys addressable and free of stored separators. */
+export function sessionScopeToken(value: string): string {
+  const token = value.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/.test(token)) {
+    throw new Error(
+      'session_scope_key must resolve to a non-empty safe token (at most 160 characters)'
+    );
+  }
+  return token;
+}
+
+/** Resolve one iteration's packet-qualified session scope from current body outputs. */
+export function resolveLoopSessionScope(
+  template: string | undefined,
+  nodeOutputs: Map<string, NodeOutput>
+): string | undefined {
+  if (template === undefined) return undefined;
+  return sessionScopeToken(substituteNodeOutputRefs(template, nodeOutputs));
+}
+
 /**
  * Build the by-reference recovery suffix for a cold-resume warning (#1846): list
  * the typed artifacts that PRIOR invocations of this workflow+scope left in the
@@ -9536,6 +9559,12 @@ interface RunDerived {
   workflowLevelOptions: WorkflowLevelOptions;
   /** Cross-run session-persistence scope key (DB conversation UUID), or undefined to skip. */
   persistScopeKey: string | undefined;
+  /**
+   * Loop-body session scope template. A `$node.output.field` reference is resolved
+   * against the current iteration, so one role can continue across rounds of one
+   * packet and start fresh when that value changes.
+   */
+  sessionScopeKey?: string;
   /** Workflow-level default for per-node `persist_session` (opt-in). */
   workflowPersistSessions: boolean;
   /**
@@ -10469,7 +10498,18 @@ async function runLayers(parentCtx: RunLayersContext): Promise<void> {
             // workflow-level persist_sessions default) and doesn't opt out via context:'fresh'.
             // A parallel-layer node CAN still use persist_session — it just doesn't share
             // with siblings. Same predicate gates the scope-artifact mirror below.
-            const usesPersistedScope = nodeUsesPersistedScope(node, ctx.workflowPersistSessions);
+            const explicitPacketScope =
+              ctx.sessionScopeKey !== undefined && node.persist_session === true;
+            const sessionScopeKey = explicitPacketScope
+              ? resolveLoopSessionScope(ctx.sessionScopeKey, ctx.nodeOutputs)
+              : undefined;
+            const effectivePersistScopeKey =
+              sessionScopeKey === undefined
+                ? ctx.persistScopeKey
+                : `${ctx.workflowRun.conversation_id ?? ctx.workflowRun.id}:${sessionScopeKey}`;
+            const usesPersistedScope =
+              sessionScopeKey !== undefined ||
+              nodeUsesPersistedScope(node, ctx.workflowPersistSessions);
 
             if (usesPersistedScope) {
               // Runtime capability guard via the resolved provider instance (catches the
@@ -10482,12 +10522,12 @@ async function runLayers(parentCtx: RunLayersContext): Promise<void> {
                   `Node '${node.id}' has persist_session: true but resolved provider '${provider}' does not support sessionResume. Remove persist_session, or use a provider with sessionResume capability.`
                 );
               }
-              if (ctx.persistScopeKey && !hasNamedSessionResume) {
+              if (effectivePersistScopeKey && !hasNamedSessionResume) {
                 try {
                   const persisted = await ctx.deps.store.getWorkflowNodeSession({
                     workflow_name: ctx.workflowName,
                     node_id: node.id,
-                    scope_key: ctx.persistScopeKey,
+                    scope_key: effectivePersistScopeKey,
                     provider,
                   });
                   if (persisted) {
@@ -10504,7 +10544,7 @@ async function runLayers(parentCtx: RunLayersContext): Promise<void> {
                         step_name: ctx.stepNamePrefix + node.id,
                         data: {
                           provider,
-                          scope_key: ctx.persistScopeKey,
+                          scope_key: effectivePersistScopeKey,
                           provider_session_id_preview: sessionIdPreview,
                         },
                       })
@@ -10525,7 +10565,7 @@ async function runLayers(parentCtx: RunLayersContext): Promise<void> {
                       err: err as Error,
                       nodeId: node.id,
                       workflow: ctx.workflowName,
-                      scopeKey: ctx.persistScopeKey,
+                      scopeKey: effectivePersistScopeKey,
                       provider,
                     },
                     'persist_session_lookup_failed'
@@ -10583,8 +10623,20 @@ async function runLayers(parentCtx: RunLayersContext): Promise<void> {
                   resolvedEffort,
                   ctx.stepNamePrefix,
                   iteration,
-                  checkpointSessionForProvider(provider),
-                  attemptTypedArtifactsFile
+                  sessionScopeKey === undefined
+                    ? checkpointSessionForProvider(provider)
+                    : async (sessionId: string): Promise<void> => {
+                        await ctx.deps.store.upsertWorkflowNodeSession({
+                          workflow_name: ctx.workflowName,
+                          node_id: node.id,
+                          scope_key: effectivePersistScopeKey,
+                          provider,
+                          provider_session_id: sessionId,
+                          last_run_id: ctx.workflowRun.id,
+                        });
+                      },
+                  attemptTypedArtifactsFile,
+                  sessionScopeKey
                 );
               },
               { state: 'failed', output: '', error: 'Node did not execute' } as NodeExecutionResult
@@ -10613,6 +10665,11 @@ async function runLayers(parentCtx: RunLayersContext): Promise<void> {
               output.state === 'completed' &&
               output.resumed === false
             ) {
+              if (sessionScopeKey !== undefined) {
+                throw new Error(
+                  `Node '${node.id}' could not restore its packet session; prior context was not restored.`
+                );
+              }
               // By-reference recovery (#1846): the prior session is gone, but prior
               // invocations of this workflow+scope may have left typed artifacts in
               // the stable scope dir. Point at them (paths only — never pasted
@@ -10647,15 +10704,20 @@ async function runLayers(parentCtx: RunLayersContext): Promise<void> {
               );
             }
 
-            // Persist (or drop) the node's provider session ID for the next run in this scope.
-            // context:'fresh' nodes are excluded (the author opted out of any cross-run memory).
-            if (usesPersistedScope && ctx.persistScopeKey && output.state === 'completed') {
+            // Legacy cross-run persistence writes on completion. Packet scopes
+            // checkpoint inside the provider call, including valid failed turns.
+            if (
+              usesPersistedScope &&
+              effectivePersistScopeKey &&
+              sessionScopeKey === undefined &&
+              output.state === 'completed'
+            ) {
               try {
                 if (output.sessionId !== undefined) {
                   await ctx.deps.store.upsertWorkflowNodeSession({
                     workflow_name: ctx.workflowName,
                     node_id: node.id,
-                    scope_key: ctx.persistScopeKey,
+                    scope_key: effectivePersistScopeKey,
                     provider,
                     provider_session_id: output.sessionId,
                     last_run_id: ctx.workflowRun.id,
@@ -10667,7 +10729,7 @@ async function runLayers(parentCtx: RunLayersContext): Promise<void> {
                   // the other side's continuity.
                   await ctx.deps.store.deleteWorkflowNodeSessions({
                     workflow_name: ctx.workflowName,
-                    scope_key: ctx.persistScopeKey,
+                    scope_key: effectivePersistScopeKey,
                     node_id: node.id,
                     provider,
                   });
@@ -10681,7 +10743,7 @@ async function runLayers(parentCtx: RunLayersContext): Promise<void> {
                     err: err as Error,
                     nodeId: node.id,
                     workflow: ctx.workflowName,
-                    scopeKey: ctx.persistScopeKey,
+                    scopeKey: effectivePersistScopeKey,
                     provider,
                   },
                   'persist_session_upsert_failed'

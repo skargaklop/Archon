@@ -402,8 +402,8 @@ function pushWorkflowScopeOntoNodes(
         if (value === undefined) continue;
         if (target[nodeKey] !== undefined) continue; // the node's own value always wins
         if (nodeKey === 'model' && !workflowModelTravelsTo(scope, node)) continue;
-        // `persist_session` only means something on a node that takes an AI turn and can
-        // resume one, and never inside a loop_group body (see the docblock above).
+        // A workflow-wide default must not enter a loop body. An explicit
+        // `persist_session: true` on a body node is a separate packet-scope opt-in.
         if (nodeKey === 'persist_session' && (insideLoopGroup || !isPersistableNode(node))) {
           continue;
         }

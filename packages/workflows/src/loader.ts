@@ -935,7 +935,9 @@ export function validateDagStructure(
           sources.push({
             field: slot.path,
             text: slot.value,
-            ...(slot.path === 'loop_group.until_bash' && isLoopGroupNode(node)
+            ...((slot.path === 'loop_group.until_bash' ||
+              slot.path === 'loop_group.session_scope_key') &&
+            isLoopGroupNode(node)
               ? { bodyNodes: node.loop_group.nodes }
               : {}),
           });

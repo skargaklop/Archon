@@ -90,6 +90,7 @@ registerOpencodeProvider();
 import {
   checkTriggerRule,
   substituteNodeOutputRefs,
+  resolveLoopSessionScope,
   substituteLoopPrevRefs,
   applyLoopPrevToBodyNode,
   executeDagWorkflow,
@@ -21009,6 +21010,127 @@ describe('executeDagWorkflow -- loop_group node', () => {
     } catch {
       // ignore
     }
+  });
+
+  it('rejects unresolved or unsafe packet session scope references', () => {
+    expect(() => resolveLoopSessionScope('$select-packet.output.packet_id', new Map())).toThrow();
+    expect(() => resolveLoopSessionScope('P/1', new Map())).toThrow();
+    expect(
+      resolveLoopSessionScope(
+        '$select-packet.output.packet_id',
+        new Map([
+          [
+            'select-packet',
+            { state: 'completed', output: '', structuredOutput: { packet_id: 'P-22F' } },
+          ],
+        ])
+      )
+    ).toBe('P-22F');
+  });
+
+  it('keeps one session per role for the same packet and starts fresh for the next packet', async () => {
+    const sessions = new Map<string, string>();
+    const store = createMockStore();
+    store.getWorkflowNodeSession.mockImplementation(async key => {
+      const id = sessions.get(`${key.node_id}|${key.scope_key}|${key.provider}`);
+      return id === undefined
+        ? null
+        : {
+            workflow_name: key.workflow_name,
+            node_id: key.node_id,
+            scope_key: key.scope_key,
+            provider: key.provider,
+            provider_session_id: id,
+            last_run_id: 'prior',
+            created_at: '2026-09-30T00:00:00Z',
+            updated_at: '2026-09-30T00:00:00Z',
+          };
+    });
+    store.upsertWorkflowNodeSession.mockImplementation(async row => {
+      sessions.set(`${row.node_id}|${row.scope_key}|${row.provider}`, row.provider_session_id);
+    });
+    let failed = '';
+    store.createWorkflowEvent.mockImplementation(async event => {
+      if (event.event_type === 'node_failed') failed += JSON.stringify(event.data);
+    });
+    await writeFile(join(testDir, 'packet.json'), '{"packet_id":"P-1"}');
+    let call = 0;
+    mockSendQueryDag.mockImplementation(async function* (_prompt, _opts, resumeSessionId) {
+      call++;
+      if (call === 4) await writeFile(join(testDir, 'packet.json'), '{"packet_id":"P-2"}');
+      const done = call >= 6;
+      yield { type: 'assistant', content: done ? 'DONE' : 'working' };
+      yield {
+        type: 'result',
+        sessionId: `saved-${String(call)}`,
+        resumed: resumeSessionId !== undefined,
+      };
+    });
+
+    const result = await executeDagWorkflow(
+      dagOptions({
+        deps: createMockDeps(store),
+        platform: createMockPlatform(),
+        cwd: testDir,
+        workflow: {
+          name: 'packet-role-sessions',
+          nodes: [
+            {
+              id: 'execution-loop',
+              kind: 'loop_group',
+              loop_group: {
+                until: 'DONE',
+                max_iterations: 4,
+                fresh_context: true,
+                session_scope_key: '$select-packet.output.packet_id',
+                nodes: [
+                  {
+                    id: 'select-packet',
+                    kind: 'exec',
+                    runtime: 'sh',
+                    script: 'cat packet.json',
+                    output_format: {
+                      type: 'object',
+                      properties: { packet_id: { type: 'string' } },
+                      required: ['packet_id'],
+                    },
+                  },
+                  {
+                    id: 'worker',
+                    kind: 'agent',
+                    source: { kind: 'inline', prompt: 'work $select-packet.output.packet_id' },
+                    depends_on: ['select-packet'],
+                    persist_session: true,
+                    context: 'fresh',
+                  },
+                  {
+                    id: 'reviewer',
+                    kind: 'agent',
+                    source: { kind: 'inline', prompt: 'review' },
+                    depends_on: ['worker'],
+                    persist_session: true,
+                    context: 'fresh',
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        workflowRun: makeWorkflowRun('packet-role-sessions'),
+      })
+    );
+
+    expect(result).toContain('DONE');
+    expect(failed).toBe('');
+    const resumes = mockSendQueryDag.mock.calls.map(callArgs => callArgs[2]);
+    expect(resumes).toEqual([undefined, undefined, 'saved-1', 'saved-2', undefined, undefined]);
+    expect(
+      mockSendQueryDag.mock.calls.every(callArgs => callArgs[3]?.persistSession !== false)
+    ).toBe(true);
+    expect(sessions.get('worker|conv-dag:P-1|claude')).toBe('saved-3');
+    expect(sessions.get('reviewer|conv-dag:P-1|claude')).toBe('saved-4');
+    expect(sessions.get('worker|conv-dag:P-2|claude')).toBe('saved-5');
+    expect(sessions.get('reviewer|conv-dag:P-2|claude')).toBe('saved-6');
   });
 
   it('completes a loop_group when the until signal appears on iteration N', async () => {

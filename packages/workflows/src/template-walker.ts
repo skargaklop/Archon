@@ -47,6 +47,7 @@ export type TemplateSlotName =
   | 'loop.until_bash'
   | 'loop.compiled_prompt'
   | 'loop_group.until_bash'
+  | 'loop_group.session_scope_key'
   | 'approval.message'
   | 'approval.on_reject.prompt'
   | 'cancel.reason'
@@ -93,6 +94,7 @@ export const SLOT_SPEC = {
   'loop.until_bash': { surface: 'shell', outputReference: true },
   'loop.compiled_prompt': { surface: 'prompt', outputReference: true },
   'loop_group.until_bash': { surface: 'shell', outputReference: true },
+  'loop_group.session_scope_key': { surface: 'value', outputReference: true },
   'approval.message': { surface: 'prompt', outputReference: true },
   'approval.on_reject.prompt': { surface: 'prompt', outputReference: true },
   'cancel.reason': { surface: 'prompt', outputReference: true },
@@ -269,6 +271,13 @@ function walk(
         'loop_group.until_bash',
         node.loop_group.until_bash,
         value => (node.loop_group.until_bash = value)
+      );
+    if (node.loop_group.session_scope_key !== undefined)
+      slot(
+        'loop_group.session_scope_key',
+        'loop_group.session_scope_key',
+        node.loop_group.session_scope_key,
+        value => (node.loop_group.session_scope_key = value)
       );
     if (recursive)
       for (const [index, body] of node.loop_group.nodes.entries())

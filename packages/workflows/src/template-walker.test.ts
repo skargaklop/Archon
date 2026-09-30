@@ -127,6 +127,7 @@ const STRING_FIELD_CLASSIFICATIONS = {
     reason: 'Loop-group completion signal is matched verbatim',
   },
   'loop_group.until_bash': { kind: 'template', slots: ['loop_group.until_bash'] },
+  'loop_group.session_scope_key': { kind: 'template', slots: ['loop_group.session_scope_key'] },
   'loop_group.gate_message': {
     kind: 'literal',
     reason: 'Loop-group gate message is operator display text',
@@ -480,6 +481,7 @@ test('the slot catalogue rejects omitted fixed fields', () => {
     'loop.until_bash': { surface: 'shell' },
     'loop.compiled_prompt': { surface: 'prompt' },
     'loop_group.until_bash': { surface: 'shell' },
+    'loop_group.session_scope_key': { surface: 'value' },
     'approval.message': { surface: 'prompt' },
     'cancel.reason': { surface: 'prompt' },
     'wait.until': { surface: 'value' },

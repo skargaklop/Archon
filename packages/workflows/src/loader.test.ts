@@ -6688,6 +6688,21 @@ nodes:
   });
 
   describe('persist_session capability gating', () => {
+    it('validates a packet scope against its loop body producer', async () => {
+      const valid = `name: packet-session\ndescription: packet session test\nprovider: claude\nnodes:\n  - id: cycle\n    loop_group:\n      max_iterations: 2\n      fresh_context: true\n      until_bash: exit 1\n      session_scope_key: $select-packet.output.packet_id\n      nodes:\n        - id: select-packet\n          bash: echo '{"packet_id":"P-1"}'\n        - id: worker\n          depends_on: [select-packet]\n          prompt: work\n          context: fresh\n          persist_session: true\n`;
+      await writeWorkflowFile(testDir, 'packet-session.yaml', valid);
+      const loaded = await discoverWorkflows(testDir, { loadDefaults: false });
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.workflows[0].workflow.nodes[0].kind).toBe('loop_group');
+      await writeWorkflowFile(
+        testDir,
+        'packet-session.yaml',
+        valid.replace('$select-packet.output.packet_id', '$missing.output.packet_id')
+      );
+      const invalid = await discoverWorkflows(testDir, { loadDefaults: false });
+      expect(invalid.errors[0]?.error).toContain("references unknown node '$missing.output'");
+    });
+
     it('parses persist_session: true on a node', async () => {
       const yaml = `name: t\ndescription: t\nprovider: claude\nnodes:\n  - id: planner\n    prompt: p\n    persist_session: true\n`;
       await writeWorkflowFile(testDir, 't.yaml', yaml);
