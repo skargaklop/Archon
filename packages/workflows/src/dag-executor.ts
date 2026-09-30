@@ -10626,10 +10626,11 @@ async function runLayers(parentCtx: RunLayersContext): Promise<void> {
                   sessionScopeKey === undefined
                     ? checkpointSessionForProvider(provider)
                     : async (sessionId: string): Promise<void> => {
+                        const scopeKey = `${ctx.workflowRun.conversation_id ?? ctx.workflowRun.id}:${sessionScopeKey}`;
                         await ctx.deps.store.upsertWorkflowNodeSession({
                           workflow_name: ctx.workflowName,
                           node_id: node.id,
-                          scope_key: effectivePersistScopeKey,
+                          scope_key: scopeKey,
                           provider,
                           provider_session_id: sessionId,
                           last_run_id: ctx.workflowRun.id,
