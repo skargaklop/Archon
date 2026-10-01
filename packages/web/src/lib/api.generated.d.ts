@@ -4177,6 +4177,7 @@ export interface components {
         interactive?: boolean;
         gate_message?: string;
         signal_completes?: boolean;
+        session_scope_key?: string;
         nodes: components['schemas']['DagNode'][];
       };
       approval?: {
