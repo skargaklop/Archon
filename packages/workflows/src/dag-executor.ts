@@ -9252,7 +9252,8 @@ async function executeComposeFanOutNode(
         configuredCommandFolder: ctx.configuredCommandFolder,
         issueContext: ctx.issueContext,
         persistScopeKey: ctx.persistScopeKey,
-        sessionScopeKey: ctx.sessionScopeKey,
+        // The producer lives in the parent loop body, not this isolated instance.
+        sessionScopeKey: resolveLoopSessionScope(ctx.sessionScopeKey, ctx.nodeOutputs),
         workflowPersistSessions: ctx.workflowPersistSessions,
         scopeArtifactsDir: undefined,
         // Runtime cardinality changes only the deterministic instance prefix; the body

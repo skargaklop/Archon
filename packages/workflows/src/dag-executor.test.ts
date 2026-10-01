@@ -21133,6 +21133,18 @@ describe('executeDagWorkflow -- loop_group node', () => {
     expect(sessions.get('reviewer|conv-dag:P-2|claude')).toBe('saved-6');
   });
 
+  it('resolves packet scope before crossing a composed fan-out boundary', async () => {
+    const outputs = new Map([
+      [
+        'select-packet',
+        { state: 'completed' as const, output: '', structuredOutput: { packet_id: 'P-24B' } },
+      ],
+    ]);
+    const packet = resolveLoopSessionScope('$select-packet.output.packet_id', outputs);
+    expect(packet).toBe('P-24B');
+    expect(resolveLoopSessionScope(packet, new Map())).toBe('P-24B');
+  });
+
   it('completes a loop_group when the until signal appears on iteration N', async () => {
     let callCount = 0;
     mockSendQueryDag.mockImplementation(async function* () {
