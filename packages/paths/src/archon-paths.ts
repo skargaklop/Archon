@@ -35,7 +35,6 @@ import {
   isAbsolute,
   parse,
 } from 'path';
-import type { PlatformPath } from 'path';
 import { homedir } from 'os';
 import { access, mkdir, symlink, lstat, readdir, readlink, realpath, rm, stat } from 'fs/promises';
 import { readFileSync } from 'fs';
@@ -181,7 +180,7 @@ export function getArchonWorkspacesPath(): string {
 }
 
 type PathSemantics = Pick<
-  PlatformPath,
+  typeof import('path'),
   'resolve' | 'relative' | 'isAbsolute' | 'sep' | 'normalize' | 'parse'
 >;
 
