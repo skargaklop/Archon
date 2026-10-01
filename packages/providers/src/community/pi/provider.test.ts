@@ -1486,7 +1486,7 @@ describe('PiProvider', () => {
     expect(chunks[2]).toMatchObject({ type: 'result' });
   });
 
-  test('resumeSessionId not found → fresh session + system warning', async () => {
+  test('resumeSessionId not found → no prompt or fresh session', async () => {
     process.env.GEMINI_API_KEY = 'sk-test';
     mockSessionList.mockImplementationOnce(async () => []);
     resetScript([
@@ -1520,21 +1520,12 @@ describe('PiProvider', () => {
         model: 'google/gemini-2.5-pro',
       })
     );
-    expect(error).toBeUndefined();
-    // Resume attempted: list() called; no match → create() called (fresh session)
+    expect(error?.message).toContain('Pi session continuity blocked');
+    expect(chunks).toEqual([]);
     expect(mockSessionList).toHaveBeenCalled();
-    expect(mockSessionCreate).toHaveBeenCalledWith('/tmp');
+    expect(mockSessionCreate).not.toHaveBeenCalled();
     expect(mockSessionOpen).not.toHaveBeenCalled();
-    // Resume failure surfaces as a system warning
-    const systemChunks = chunks.filter(
-      (c): c is { type: 'system'; content: string } =>
-        typeof c === 'object' && c !== null && (c as { type?: string }).type === 'system'
-    );
-    expect(systemChunks.some(c => c.content.includes('Could not resume'))).toBe(true);
-    // ...and as resumed:false on the result chunk so the executor can surface it.
-    expect(chunks.find(c => (c as { type?: string }).type === 'result')).toMatchObject({
-      resumed: false,
-    });
+    expect(mockPrompt).not.toHaveBeenCalled();
   });
 
   test('resumeSessionId matches existing session → open by path, no warning', async () => {
@@ -1587,6 +1578,53 @@ describe('PiProvider', () => {
     expect(chunks.find(c => (c as { type?: string }).type === 'result')).toMatchObject({
       resumed: true,
     });
+  });
+
+  test('a session binding is persisted before prompting and survives a provider failure', async () => {
+    process.env.GEMINI_API_KEY = 'sk-test';
+    mockPrompt.mockImplementationOnce(async () => {
+      throw new Error('402 credits');
+    });
+    const bindings: string[] = [];
+    const { error } = await consume(
+      new PiProvider().sendQuery('hi', '/tmp', undefined, {
+        model: 'google/gemini-2.5-pro',
+        onSessionBound: async id => {
+          bindings.push(id);
+        },
+      })
+    );
+    expect(error?.message).toContain('402 credits');
+    expect(bindings).toEqual(['mock-session-uuid']);
+  });
+
+  test('a resumed in-place session with a different ID cannot prompt', async () => {
+    process.env.GEMINI_API_KEY = 'sk-test';
+    mockSessionList.mockImplementationOnce(async () => [
+      { id: 'expected-id', path: '/sessions/expected-id.jsonl', cwd: '/tmp' },
+    ]);
+    const { error } = await consume(
+      new PiProvider().sendQuery('hi', '/tmp', 'expected-id', {
+        model: 'google/gemini-2.5-pro',
+        onSessionBound: async () => undefined,
+      })
+    );
+    expect(error?.message).toContain('Pi session continuity blocked');
+    expect(mockPrompt).not.toHaveBeenCalled();
+  });
+
+  test('a failed binding prevents the prompt from starting', async () => {
+    process.env.GEMINI_API_KEY = 'sk-test';
+    const { error } = await consume(
+      new PiProvider().sendQuery('hi', '/tmp', undefined, {
+        model: 'google/gemini-2.5-pro',
+        onSessionBound: async () => {
+          throw new Error('checkpoint failed');
+        },
+      })
+    );
+    expect(error?.message).toContain('checkpoint failed');
+    expect(mockPrompt).not.toHaveBeenCalled();
   });
 
   test('forkSession resumes into a distinct branch without opening the source', async () => {

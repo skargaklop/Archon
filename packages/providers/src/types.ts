@@ -478,6 +478,8 @@ export interface AgentRequestOptions {
   forkSession?: boolean;
   /** When false, skip writing session transcript to disk. */
   persistSession?: boolean;
+  /** Durable session binding, awaited before any prompt/model request. */
+  onSessionBound?: (sessionId: string) => Promise<void>;
   /**
    * In-process tools the model may call this turn. Defined once by the caller
    * (e.g. core's manage_run) and adapted per provider — Claude wraps each via

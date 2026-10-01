@@ -2266,7 +2266,7 @@ async function executeNodeInternal(
   const nodeAbortController = new AbortController();
   // Request a fork when resuming. Exact-fork callers gate on sessionFork first;
   // legacy resume-only providers may continue the source session in place.
-  const shouldForkSession = resumeSessionId !== undefined;
+  const shouldForkSession = resumeSessionId !== undefined && packetSessionScope === undefined;
   const nodeOptionsWithAbort: SendQueryOptions | undefined = {
     ...nodeOptions,
     abortSignal: nodeAbortController.signal,
@@ -2276,6 +2276,9 @@ async function executeNodeInternal(
       ? { persistSession: false }
       : {}),
     ...(shouldForkSession ? { forkSession: true } : {}),
+    ...(packetSessionScope !== undefined && checkpointSession
+      ? { onSessionBound: checkpointSession }
+      : {}),
   };
   let nodeIdleTimedOut = false;
   let lastWatchdogReset: WatchdogReset | undefined;
@@ -2952,11 +2955,17 @@ async function executeNodeInternal(
       await emitReask(reaskAttempt);
     };
     while (true) {
-      // Legacy reasks use a fresh throwaway session so an invalid turn is not carried
-      // forward. Named resume is stricter: every accepted pass must independently fork
-      // the declared source rather than inheriting stale attestation from an earlier pass.
+      // Packet-scoped reasks keep the same conversation. Legacy reasks start
+      // fresh; named resumes independently fork their declared source.
       const reaskResumeSessionId =
-        namedResumeSourceNodeId !== undefined || reaskAttempt === 0 ? resumeSessionId : undefined;
+        packetSessionScope !== undefined && reaskAttempt > 0
+          ? newSessionId
+          : namedResumeSourceNodeId !== undefined || reaskAttempt === 0
+            ? resumeSessionId
+            : undefined;
+      if (packetSessionScope !== undefined && reaskAttempt > 0 && !reaskResumeSessionId) {
+        throw new Error(`Node '${node.id}' cannot reask without its bound packet session`);
+      }
       try {
         await runStreamPass(reaskPrompt, reaskResumeSessionId);
       } finally {
@@ -3141,7 +3150,7 @@ async function executeNodeInternal(
       }
     }
 
-    if (newSessionId !== undefined) {
+    if (newSessionId !== undefined && packetSessionScope === undefined) {
       await checkpointSession?.(newSessionId);
     }
 
@@ -6134,12 +6143,12 @@ async function executeLoopNode(
             abortSignal: iterationAbortController.signal,
           };
 
-          // Reask attempts start a FRESH session (mirrors runStreamPass in
-          // executeNodeInternal) so an invalid turn is not carried forward as context.
+          // A persisted loop keeps its own session across reasks; legacy
+          // unscoped loops retain their historical fresh-reask behavior.
           const generator = aiClient.sendQuery(
             finalPrompt,
             cwd,
-            reaskAttempt === 0 ? resumeSessionId : undefined,
+            reaskAttempt === 0 ? resumeSessionId : checkpointSession ? currentSessionId : undefined,
             iterationOptions
           );
           const runningTools = new Map<string, RunningTool>();
@@ -10557,8 +10566,9 @@ async function runLayers(parentCtx: RunLayersContext): Promise<void> {
                       });
                   }
                 } catch (err) {
-                  // Non-fatal: the node still runs (fresh, no resume), but the user opted
-                  // into persistence — a DB error here silently breaks continuity, so warn
+                  if (sessionScopeKey !== undefined) throw err;
+                  // Non-fatal for legacy unscoped sessions; packet sessions fail closed.
+                  // A DB error here silently breaks continuity, so warn
                   // them as well as the logs. (A "no row" result is not an error: it returns
                   // null above and this catch never fires for it.)
                   getLog().warn(
@@ -10610,6 +10620,23 @@ async function runLayers(parentCtx: RunLayersContext): Promise<void> {
                   ctx.artifactsDir,
                   ctx.workflowRun.id
                 );
+                if (sessionScopeKey !== undefined && effectivePersistScopeKey) {
+                  const latest = await ctx.deps.store.getWorkflowNodeSession({
+                    workflow_name: ctx.workflowName,
+                    node_id: node.id,
+                    scope_key: effectivePersistScopeKey,
+                    provider,
+                  });
+                  if (
+                    resumeSessionId !== undefined &&
+                    latest?.provider_session_id !== resumeSessionId
+                  ) {
+                    throw new Error(
+                      `Node '${node.id}' packet session changed during retry; refusing fresh fallback`
+                    );
+                  }
+                  resumeSessionId = latest?.provider_session_id;
+                }
                 return executeNodeInternal(
                   ctx,
                   node,
@@ -10628,6 +10655,17 @@ async function runLayers(parentCtx: RunLayersContext): Promise<void> {
                     ? checkpointSessionForProvider(provider)
                     : async (sessionId: string): Promise<void> => {
                         const scopeKey = `${ctx.workflowRun.conversation_id ?? ctx.workflowRun.id}:${sessionScopeKey}`;
+                        const existing = await ctx.deps.store.getWorkflowNodeSession({
+                          workflow_name: ctx.workflowName,
+                          node_id: node.id,
+                          scope_key: scopeKey,
+                          provider,
+                        });
+                        if (existing && existing.provider_session_id !== sessionId) {
+                          throw new Error(
+                            `Node '${node.id}' packet session changed; refusing to overwrite its exact ID`
+                          );
+                        }
                         await ctx.deps.store.upsertWorkflowNodeSession({
                           workflow_name: ctx.workflowName,
                           node_id: node.id,

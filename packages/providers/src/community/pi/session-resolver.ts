@@ -6,13 +6,6 @@ import { SessionManager } from '@earendil-works/pi-coding-agent';
 export interface ResolvedSession {
   /** SessionManager to hand to createAgentSession. */
   sessionManager: SessionManager;
-  /**
-   * True when a resumeSessionId was provided but no matching session file
-   * was found — caller should surface a system warning before the new
-   * session starts. Mirrors the `resume_thread_failed` fallback pattern
-   * the Codex provider uses.
-   */
-  resumeFailed: boolean;
 }
 
 /**
@@ -23,7 +16,7 @@ export interface ResolvedSession {
  *  - No resumeSessionId + persistSession=false → `SessionManager.inMemory(cwd)` (CLI `--no-session` parity).
  *  - resumeSessionId matches a session file for this cwd → `SessionManager.open(path)`.
  *  - resumeSessionId matches and forkSession is true → `SessionManager.forkFrom(path, cwd)`.
- *  - resumeSessionId provided but not found → fresh session, `resumeFailed: true`.
+ *  - resumeSessionId provided but not found → error; never erase continuity.
  *
  * Pi stores sessions as JSONL files under `~/.pi/agent/sessions/<encoded-cwd>/`
  * (or `$PI_CODING_AGENT_DIR/sessions/...`). This mirrors Claude's
@@ -45,7 +38,6 @@ export async function resolvePiSession(
   if (!resumeSessionId) {
     return {
       sessionManager: persistSession ? SessionManager.create(cwd) : SessionManager.inMemory(cwd),
-      resumeFailed: false,
     };
   }
 
@@ -57,17 +49,17 @@ export async function resolvePiSession(
         sessionManager: forkSession
           ? SessionManager.forkFrom(match.path, cwd)
           : SessionManager.open(match.path),
-        resumeFailed: false,
       };
     }
   } catch (err: unknown) {
-    // Only swallow "session dir doesn't exist yet" — any other error
-    // (permission denied, corrupt JSONL, etc.) must propagate so failures
-    // aren't papered over as a silent "no resume, fresh session" success.
+    // Missing directory and missing ID both block exact continuity. Other errors
+    // retain their original diagnostics instead of being disguised as absence.
     if (!isMissingSessionDirError(err)) throw err;
   }
 
-  return { sessionManager: SessionManager.create(cwd), resumeFailed: true };
+  throw new Error(
+    `Pi session continuity blocked: exact session '${resumeSessionId}' is unavailable for this working directory`
+  );
 }
 
 function isMissingSessionDirError(err: unknown): boolean {

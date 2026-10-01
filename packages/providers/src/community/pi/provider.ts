@@ -665,22 +665,13 @@ export class PiProvider implements IAgentProvider {
     //    ~/.pi/agent/sessions/<encoded-cwd>/<uuid>.jsonl. `resolvePiSession`
     //    returns a SessionManager bound to either a new session (no resume
     //    id) or an existing session (resume id matches a file); if the id
-    //    was provided but not found, it falls through to a new session and
-    //    the caller surfaces a resume_failed warning (matches the Codex
-    //    provider's fallback pattern for the same condition).
-    const { sessionManager, resumeFailed } = await resolvePiSession(
+    //    was provided but not found, it fails closed rather than losing context.
+    const { sessionManager } = await resolvePiSession(
       cwd,
       resumeSessionId,
       requestOptions?.forkSession,
       requestOptions?.persistSession
     );
-    if (resumeFailed) {
-      yield {
-        type: 'system',
-        content: '⚠️ Could not resume Pi session. Starting fresh conversation.',
-      };
-    }
-
     // Load user's Pi settings from disk (~/.pi/agent/settings.json for global,
     // <cwd>/.pi/settings.json for project) as the starting point, then seed an
     // in-memory instance. The in-memory instance guarantees no write-back to
@@ -824,7 +815,7 @@ export class PiProvider implements IAgentProvider {
         extensionsEnabled: enableExtensions,
         interactive,
         nodeId: nodeConfig?.nodeId,
-        resumed: resumeSessionId !== undefined && !resumeFailed,
+        resumed: resumeSessionId !== undefined,
       },
       'pi.session_started'
     );
@@ -875,6 +866,27 @@ export class PiProvider implements IAgentProvider {
         ? { customTools: piCustomTools, noTools: 'builtin' as const }
         : {}),
     });
+
+    // The caller must durably bind the exact session before a model call can fail.
+    // If persistence fails, dispose this session without sending a prompt.
+    try {
+      if (requestOptions?.onSessionBound) {
+        if (!session.sessionId) {
+          throw new Error('Pi session continuity blocked: missing session ID');
+        }
+        if (
+          resumeSessionId &&
+          !requestOptions.forkSession &&
+          session.sessionId !== resumeSessionId
+        ) {
+          throw new Error('Pi session continuity blocked: resumed session ID changed unexpectedly');
+        }
+        await requestOptions.onSessionBound(session.sessionId);
+      }
+    } catch (err) {
+      session.dispose();
+      throw err;
+    }
 
     // Extension models aren't in the static catalog — skip the fallback warning.
     if (modelFallbackMessage && model) {
@@ -981,7 +993,7 @@ export class PiProvider implements IAgentProvider {
           outputFormat?.schema,
           uiBridge
         ),
-        resumedOutcome(resumeSessionId, !resumeFailed)
+        resumedOutcome(resumeSessionId, true)
       );
       getLog().info({ piProvider: parsed.provider }, 'pi.prompt_completed');
     } catch (err) {

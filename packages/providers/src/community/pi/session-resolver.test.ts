@@ -32,7 +32,6 @@ describe('resolvePiSession', () => {
 
   test('no resumeSessionId → create fresh session', async () => {
     const result = await resolvePiSession('/tmp/proj', undefined);
-    expect(result.resumeFailed).toBe(false);
     expect(mockCreate).toHaveBeenCalledWith('/tmp/proj');
     expect(mockOpen).not.toHaveBeenCalled();
     expect(mockList).not.toHaveBeenCalled();
@@ -40,7 +39,6 @@ describe('resolvePiSession', () => {
 
   test('persistSession=false → create in-memory session like pi --no-session', async () => {
     const result = await resolvePiSession('/tmp/proj', undefined, false, false);
-    expect(result.resumeFailed).toBe(false);
     expect(mockInMemory).toHaveBeenCalledWith('/tmp/proj');
     expect(mockCreate).not.toHaveBeenCalled();
     expect(mockList).not.toHaveBeenCalled();
@@ -53,7 +51,6 @@ describe('resolvePiSession', () => {
     ]);
 
     const result = await resolvePiSession('/tmp/proj', 'def-456');
-    expect(result.resumeFailed).toBe(false);
     expect(mockOpen).toHaveBeenCalledWith('/sessions/def-456.jsonl');
     expect(mockForkFrom).not.toHaveBeenCalled();
     expect(mockCreate).not.toHaveBeenCalled();
@@ -65,44 +62,44 @@ describe('resolvePiSession', () => {
     ]);
 
     const result = await resolvePiSession('/tmp/proj', 'abc-123', true);
-    expect(result.resumeFailed).toBe(false);
     expect(mockForkFrom).toHaveBeenCalledWith('/sessions/abc-123.jsonl', '/tmp/proj');
     expect(mockOpen).not.toHaveBeenCalled();
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
-  test('resume id not found → fresh session with resumeFailed=true', async () => {
+  test('resume id not found → fails closed without creating a fresh session', async () => {
     mockList.mockImplementationOnce(async () => [
       { id: 'abc-123', path: '/sessions/abc-123.jsonl', cwd: '/tmp/proj' },
     ]);
 
-    const result = await resolvePiSession('/tmp/proj', 'missing-id', true);
-    expect(result.resumeFailed).toBe(true);
-    expect(mockCreate).toHaveBeenCalledWith('/tmp/proj');
+    await expect(resolvePiSession('/tmp/proj', 'missing-id', true)).rejects.toThrow(
+      /Pi session continuity blocked.*missing-id/
+    );
+    expect(mockCreate).not.toHaveBeenCalled();
     expect(mockOpen).not.toHaveBeenCalled();
     expect(mockForkFrom).not.toHaveBeenCalled();
   });
 
-  test('list() throws ENOENT → treated as not-found, fresh session', async () => {
+  test('list() throws ENOENT while resuming → fails closed', async () => {
     mockList.mockImplementationOnce(async () => {
-      const err = Object.assign(new Error('no such directory'), { code: 'ENOENT' });
-      throw err;
+      throw Object.assign(new Error('no such directory'), { code: 'ENOENT' });
     });
 
-    const result = await resolvePiSession('/tmp/proj', 'some-id');
-    expect(result.resumeFailed).toBe(true);
-    expect(mockCreate).toHaveBeenCalledWith('/tmp/proj');
+    await expect(resolvePiSession('/tmp/proj', 'some-id')).rejects.toThrow(
+      /Pi session continuity blocked.*some-id/
+    );
+    expect(mockCreate).not.toHaveBeenCalled();
   });
 
-  test('list() throws ENOTDIR → treated as not-found, fresh session', async () => {
+  test('list() throws ENOTDIR while resuming → fails closed', async () => {
     mockList.mockImplementationOnce(async () => {
-      const err = Object.assign(new Error('not a directory'), { code: 'ENOTDIR' });
-      throw err;
+      throw Object.assign(new Error('not a directory'), { code: 'ENOTDIR' });
     });
 
-    const result = await resolvePiSession('/tmp/proj', 'some-id');
-    expect(result.resumeFailed).toBe(true);
-    expect(mockCreate).toHaveBeenCalledWith('/tmp/proj');
+    await expect(resolvePiSession('/tmp/proj', 'some-id')).rejects.toThrow(
+      /Pi session continuity blocked.*some-id/
+    );
+    expect(mockCreate).not.toHaveBeenCalled();
   });
 
   test('list() throws unexpected error → propagates (no silent fallback)', async () => {
@@ -128,7 +125,6 @@ describe('resolvePiSession', () => {
   test('empty resumeSessionId string → fresh session (no resume attempted)', async () => {
     // Treated as "no resume requested" by the truthy check in the resolver.
     const result = await resolvePiSession('/tmp/proj', '');
-    expect(result.resumeFailed).toBe(false);
     expect(mockList).not.toHaveBeenCalled();
     expect(mockCreate).toHaveBeenCalled();
   });
