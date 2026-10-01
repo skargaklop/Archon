@@ -31,14 +31,14 @@ describe('resolvePiSession', () => {
   });
 
   test('no resumeSessionId → create fresh session', async () => {
-    const result = await resolvePiSession('/tmp/proj', undefined);
+    await resolvePiSession('/tmp/proj', undefined);
     expect(mockCreate).toHaveBeenCalledWith('/tmp/proj');
     expect(mockOpen).not.toHaveBeenCalled();
     expect(mockList).not.toHaveBeenCalled();
   });
 
   test('persistSession=false → create in-memory session like pi --no-session', async () => {
-    const result = await resolvePiSession('/tmp/proj', undefined, false, false);
+    await resolvePiSession('/tmp/proj', undefined, false, false);
     expect(mockInMemory).toHaveBeenCalledWith('/tmp/proj');
     expect(mockCreate).not.toHaveBeenCalled();
     expect(mockList).not.toHaveBeenCalled();
@@ -50,7 +50,7 @@ describe('resolvePiSession', () => {
       { id: 'def-456', path: '/sessions/def-456.jsonl', cwd: '/tmp/proj' },
     ]);
 
-    const result = await resolvePiSession('/tmp/proj', 'def-456');
+    await resolvePiSession('/tmp/proj', 'def-456');
     expect(mockOpen).toHaveBeenCalledWith('/sessions/def-456.jsonl');
     expect(mockForkFrom).not.toHaveBeenCalled();
     expect(mockCreate).not.toHaveBeenCalled();
@@ -61,7 +61,7 @@ describe('resolvePiSession', () => {
       { id: 'abc-123', path: '/sessions/abc-123.jsonl', cwd: '/tmp/proj' },
     ]);
 
-    const result = await resolvePiSession('/tmp/proj', 'abc-123', true);
+    await resolvePiSession('/tmp/proj', 'abc-123', true);
     expect(mockForkFrom).toHaveBeenCalledWith('/sessions/abc-123.jsonl', '/tmp/proj');
     expect(mockOpen).not.toHaveBeenCalled();
     expect(mockCreate).not.toHaveBeenCalled();
@@ -124,7 +124,7 @@ describe('resolvePiSession', () => {
 
   test('empty resumeSessionId string → fresh session (no resume attempted)', async () => {
     // Treated as "no resume requested" by the truthy check in the resolver.
-    const result = await resolvePiSession('/tmp/proj', '');
+    await resolvePiSession('/tmp/proj', '');
     expect(mockList).not.toHaveBeenCalled();
     expect(mockCreate).toHaveBeenCalled();
   });
