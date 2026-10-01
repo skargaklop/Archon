@@ -25,9 +25,8 @@ export interface ResolvedSession {
  *
  * Lookup uses `SessionManager.list(cwd)` which scans only this cwd's
  * sessions. Cross-cwd resume (e.g. worktree switch) is deliberately not
- * supported in this pass — if a workflow moves to a different directory,
- * a fresh session is created. This matches Pi's own mental model and
- * avoids ambiguity.
+ * supported: a workflow moved to a different directory fails closed rather
+ * than silently losing the packet's context.
  */
 export async function resolvePiSession(
   cwd: string,
