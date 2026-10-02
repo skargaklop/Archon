@@ -21028,6 +21028,82 @@ describe('executeDagWorkflow -- loop_group node', () => {
     ).toBe('P-22F');
   });
 
+  it('resumes the exact packet node session across different run conversations', async () => {
+    const store = createMockStore();
+    const saved = new Map<string, string>();
+    store.getWorkflowNodeSession.mockImplementation(async key => {
+      const id = saved.get(`${key.workflow_name}|${key.node_id}|${key.scope_key}|${key.provider}`);
+      return id
+        ? { ...key, provider_session_id: id, last_run_id: 'prior', created_at: '', updated_at: '' }
+        : null;
+    });
+    store.upsertWorkflowNodeSession.mockImplementation(async row => {
+      saved.set(
+        `${row.workflow_name}|${row.node_id}|${row.scope_key}|${row.provider}`,
+        row.provider_session_id
+      );
+    });
+    mockSendQueryDag.mockImplementation(async function* (_prompt, _cwd, resume, options) {
+      await options?.onSessionBound?.(resume ?? 'exact-packet-session');
+      yield { type: 'assistant', content: 'DONE' };
+      yield { type: 'result', sessionId: resume ?? 'exact-packet-session', resumed: !!resume };
+    });
+    for (const conversation of ['first-run', 'replacement-run']) {
+      await executeDagWorkflow(
+        dagOptions({
+          deps: createMockDeps(store),
+          platform: createMockPlatform(),
+          cwd: testDir,
+          workflow: {
+            name: 'cross-run-packet',
+            nodes: [
+              {
+                id: 'execution-loop',
+                kind: 'loop_group',
+                loop_group: {
+                  until: 'DONE',
+                  max_iterations: 1,
+                  fresh_context: true,
+                  session_scope_key: '$packet.output.packet_id',
+                  nodes: [
+                    {
+                      id: 'packet',
+                      kind: 'exec',
+                      runtime: 'sh',
+                      script: 'echo \'{"packet_id":"P-1"}\'',
+                      output_format: {
+                        type: 'object',
+                        properties: { packet_id: { type: 'string' } },
+                        required: ['packet_id'],
+                      },
+                    },
+                    {
+                      id: 'worker',
+                      kind: 'agent',
+                      source: { kind: 'inline', prompt: 'work' },
+                      depends_on: ['packet'],
+                      persist_session: true,
+                      context: 'fresh',
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+          workflowRun: {
+            ...makeWorkflowRun('cross-run-packet'),
+            id: conversation,
+            conversation_id: conversation,
+          },
+        })
+      );
+    }
+    expect(mockSendQueryDag.mock.calls.map(args => args[2])).toEqual([
+      undefined,
+      'exact-packet-session',
+    ]);
+  });
+
   it('keeps one session per role for the same packet and starts fresh for the next packet', async () => {
     const sessions = new Map<string, string>();
     const store = createMockStore();
@@ -21131,10 +21207,10 @@ describe('executeDagWorkflow -- loop_group node', () => {
     expect(
       mockSendQueryDag.mock.calls.every(callArgs => callArgs[3]?.persistSession !== false)
     ).toBe(true);
-    expect(sessions.get('worker|conv-dag:P-1|claude')).toBe('saved-1');
-    expect(sessions.get('reviewer|conv-dag:P-1|claude')).toBe('saved-2');
-    expect(sessions.get('worker|conv-dag:P-2|claude')).toBe('saved-5');
-    expect(sessions.get('reviewer|conv-dag:P-2|claude')).toBe('saved-6');
+    expect(sessions.get(`worker|${testDir}:P-1|claude`)).toBe('saved-1');
+    expect(sessions.get(`reviewer|${testDir}:P-1|claude`)).toBe('saved-2');
+    expect(sessions.get(`worker|${testDir}:P-2|claude`)).toBe('saved-5');
+    expect(sessions.get(`reviewer|${testDir}:P-2|claude`)).toBe('saved-6');
   });
 
   it('checkpoints the first packet session before a provider failure and resumes it on retry', async () => {
@@ -21217,7 +21293,7 @@ describe('executeDagWorkflow -- loop_group node', () => {
     );
     expect(attempts).toBe(2);
     expect(result).toContain('DONE');
-    expect(sessions.get('worker|conv-dag:P-1|claude')).toBe('first-session');
+    expect(sessions.get(`worker|${testDir}:P-1|claude`)).toBe('first-session');
   });
 
   it('refuses to replace an existing packet role session with a new ID', async () => {
@@ -21294,7 +21370,7 @@ describe('executeDagWorkflow -- loop_group node', () => {
       })
     );
     expect(attempts).toBe(2);
-    expect(sessions.get('worker|conv-dag:P-1|claude')).toBe('original');
+    expect(sessions.get(`worker|${testDir}:P-1|claude`)).toBe('original');
   });
 
   it('reasks invalid packet output in its bound session', async () => {

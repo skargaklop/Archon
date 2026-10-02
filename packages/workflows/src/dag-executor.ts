@@ -10513,10 +10513,10 @@ async function runLayers(parentCtx: RunLayersContext): Promise<void> {
             const sessionScopeKey = explicitPacketScope
               ? resolveLoopSessionScope(ctx.sessionScopeKey, ctx.nodeOutputs)
               : undefined;
+            // Packet identity survives a superseding run in this checkout.
+            // Workflow, node, and provider are separate columns in the session key.
             const effectivePersistScopeKey =
-              sessionScopeKey === undefined
-                ? ctx.persistScopeKey
-                : `${ctx.workflowRun.conversation_id ?? ctx.workflowRun.id}:${sessionScopeKey}`;
+              sessionScopeKey === undefined ? ctx.persistScopeKey : `${ctx.cwd}:${sessionScopeKey}`;
             const usesPersistedScope =
               sessionScopeKey !== undefined ||
               nodeUsesPersistedScope(node, ctx.workflowPersistSessions);
@@ -10654,7 +10654,7 @@ async function runLayers(parentCtx: RunLayersContext): Promise<void> {
                   sessionScopeKey === undefined
                     ? checkpointSessionForProvider(provider)
                     : async (sessionId: string): Promise<void> => {
-                        const scopeKey = `${ctx.workflowRun.conversation_id ?? ctx.workflowRun.id}:${sessionScopeKey}`;
+                        const scopeKey = `${ctx.cwd}:${sessionScopeKey}`;
                         const existing = await ctx.deps.store.getWorkflowNodeSession({
                           workflow_name: ctx.workflowName,
                           node_id: node.id,

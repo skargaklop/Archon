@@ -918,7 +918,7 @@ The resolved provider must declare `sessionResume: true` in its capabilities. Th
 
 - **`bash:` / `script:`** — never invoke a provider, so the field is meaningless. Setting it produces a parse warning (shown by `archon validate workflows`) and is ignored.
 - **`approval:` / `cancel:`** — same: no AI call, no session to persist.
-- **`loop:` / `loop_group:`** — have their own per-iteration session threading. Cross-run persistence isn't wired for them in this release; the field is warn-and-dropped on loop and loop_group nodes. Use a `prompt:` node if you need cross-run memory.
+- **`loop:` / `loop_group:`** — the container's `persist_session` field is warn-and-dropped. A `loop_group` with `session_scope_key` can persist explicitly opted-in AI body nodes (`persist_session: true`) per resolved scope, workflow, node, provider, and checkout path across runs in that checkout. An unavailable packet session fails closed rather than silently starting fresh. Other loop-body session threading remains per iteration.
 
 When a workflow-level `persist_sessions: true` is combined with any of these node types, the capability check and persistence logic both skip the non-applicable nodes — no false validation errors, no silent runtime mistakes.
 
