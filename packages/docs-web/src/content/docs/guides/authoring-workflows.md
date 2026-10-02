@@ -922,6 +922,37 @@ The resolved provider must declare `sessionResume: true` in its capabilities. Th
 
 When a workflow-level `persist_sessions: true` is combined with any of these node types, the capability check and persistence logic both skip the non-applicable nodes — no false validation errors, no silent runtime mistakes.
 
+### Packet-scoped continuous sessions in `loop_group:`
+
+For a long item loop, set `session_scope_key` once on the `loop_group:` and `persist_session: true` on each AI body node. The body selector, orchestrator, worker, reviewer, and chair then share the same work-item scope, while separate roles keep separate sessions:
+
+```yaml
+- id: execution-loop
+  provider: pi
+  loop_group:
+    max_iterations: 160
+    fresh_context: true
+    session_scope_key: "$select-item.output.item_id"
+    nodes:
+      - id: select-item
+        runtime: sh
+        script: ./scripts/select-item.sh
+        output_format:
+          type: object
+          properties:
+            item_id: { type: string }
+          required: [item_id]
+
+      - id: worker
+        prompt: "Implement the current item."
+        provider: pi
+        persist_session: true
+```
+
+The same loop scope key means `worker` for item `A` resumes the persisted `worker` session for item `A`. A selector returning item `B` creates a separate session. A new run for the same workflow, node, provider, checkout path, and item resumes the exact saved session instead of minting a new one because the run received a different conversation ID.
+
+A saved packet session is fail-closed continuity, not liveness evidence: lookup, checkpoint, or provider-restore failure stops with bounded diagnostics rather than replacing the exact ID with whichever session appears newest. A move to a different checkout path starts a separate persistence scope.
+
 ### `context: fresh` overrides
 
 A node with `context: fresh` skips persistence (and in-run threading). The explicit "always fresh" intent wins over `persist_session`.
